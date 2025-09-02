@@ -38,7 +38,7 @@ export default function OverlayPage() {
   };
 
   return (
-    <div className='h-full text-white bg-white'>
+    <div className='h-full text-white bg-transparent'>
       <AnimatedBorder
         borderWidth={borderWidth}
         outerRadius={outerRadius}
