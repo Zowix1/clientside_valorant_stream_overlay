@@ -45,7 +45,7 @@ function Tracker() {
   if (!apiKey || !region || (!puuid && !(name && tag))) {
     return (
       <div
-        className='w-[360px] h-24 bg-gray-900/75 text-white flex items-center justify-center rounded'
+        className='w-[360px] h-24 text-white flex items-center justify-center rounded'
         style={{ backgroundColor: cardBg, color: textHex }}>
         <div className='text-center text-xs px-3'>
           Missing params. Provide <strong>key</strong>, <strong>region</strong>, and either <strong>puuid</strong> or{' '}

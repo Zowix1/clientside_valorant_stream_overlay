@@ -30,6 +30,7 @@ export default function SocialsBanner({
     kick: { enabled: true, handle: '@yourname' },
     youtube: { enabled: true, handle: '@yourname' },
   },
+  background = '#111827',
 }) {
   // Fixed rotation order for consistency
   const ordered = useMemo(
@@ -55,7 +56,7 @@ export default function SocialsBanner({
   const handle = formatHandle(key, ordered[index].handle);
 
   return (
-    <div className='w-full h-8 bg-gray-900 overflow-hidden relative'>
+    <div className='w-full h-8 overflow-hidden relative' style={{ backgroundColor: background }}>
       <AnimatePresence mode='wait'>
         <motion.div
           key={`${key}-${handle}-${index}`}

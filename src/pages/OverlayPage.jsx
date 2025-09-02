@@ -37,6 +37,8 @@ export default function OverlayPage() {
     kick: socialItem('kick', true, '@yourname'),
   };
 
+  const cardBg = params.get('bg') || '#111827'; // gray-900
+
   return (
     <div className='h-full text-white bg-transparent'>
       <AnimatedBorder
@@ -49,7 +51,7 @@ export default function OverlayPage() {
         innerBackground='transparent'>
         <div className='relative w-[360px]'>
           <Tracker />
-          {sbEnabled && <SocialsBanner interval={sbInterval} items={socials} />}
+          {sbEnabled && <SocialsBanner background={cardBg} interval={sbInterval} items={socials} />}
         </div>
       </AnimatedBorder>
     </div>
