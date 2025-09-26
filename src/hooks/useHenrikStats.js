@@ -144,7 +144,9 @@ export default function useHenrikStats({
         maybeRollDay();
 
         // Pull enough items so we catch earlier matches if overlay is opened late
-        const mh = await axiosRef.current.get(`/valorant/v3/by-puuid/matches/${region}/${P}`, { params: { size: 30 } });
+        const mh = await axiosRef.current.get(`/valorant/v3/by-puuid/matches/${region}/${P}`, {
+          params: { size: 10, mode: 'competitive' },
+        });
         const matches = Array.isArray(mh.data?.data) ? mh.data.data : [];
 
         matches
