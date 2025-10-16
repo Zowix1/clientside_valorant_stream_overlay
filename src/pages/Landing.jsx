@@ -9,9 +9,11 @@ const DEFAULT_SETTINGS = {
     mode: 'gradient', // 'gradient' | 'solid'
     gradient: ['#6b21a8', '#ec4899'],
     solid: '#FF4655',
+    solidAlpha: 1,
   },
   card: {
     bg: '#111827', // gray-900
+    bgAlpha: 1,
     text: '#FFFFFF',
   },
   waves: { enabled: true }, // W/L wave animation
@@ -70,6 +72,7 @@ function Landing() {
         particleCount={300}
         particleSpread={10}
         cameraDistance={20}
+        depthAmplify={3.0}
         speed={0.1}
         parallax={{ strength: 1.1, lerp: 0.07 }}
         rotateSpeed={{ x: 0.01, y: 0.03, z: 0.015 }}

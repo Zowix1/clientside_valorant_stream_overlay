@@ -181,8 +181,16 @@ export default function CustomizationPanel({ settings, onChange, onClose, onRese
                 ))}
               </div>
             ) : (
-              <div className='mt-3'>
+              <div className='mt-3 space-y-2'>
                 <ColorRow label='Solid' value={s.border.solid} onChange={(v) => set('border.solid', v)} />
+                <NumberRow
+                  label='Alpha'
+                  value={s.border.solidAlpha ?? 1}
+                  onChange={(v) => set('border.solidAlpha', Math.max(0, Math.min(1, v)))}
+                  min={0}
+                  max={1}
+                  step={0.05}
+                />
               </div>
             )}
           </section>
@@ -195,6 +203,14 @@ export default function CustomizationPanel({ settings, onChange, onClose, onRese
             </div>
             <div className='space-y-2'>
               <ColorRow label='BG' value={s.card.bg} onChange={(v) => set('card.bg', v)} />
+              <NumberRow
+                label='BG Alpha'
+                value={s.card.bgAlpha ?? 1}
+                onChange={(v) => set('card.bgAlpha', Math.max(0, Math.min(1, v)))}
+                min={0}
+                max={1}
+                step={0.05}
+              />
               <ColorRow label='Text' value={s.card.text} onChange={(v) => set('card.text', v)} />
             </div>
           </section>

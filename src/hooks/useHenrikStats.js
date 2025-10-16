@@ -2,21 +2,42 @@ import { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 
 const BASE = import.meta.env.VITE_HENRIK_BASE ?? '/henrik';
-const BUDGET_RPM = 25;
 
-// 2 requests per poll (matches + mmr)
-export function computeSafePollMs(accounts = 1, budgetRpm = BUDGET_RPM) {
+const BUDGET_RPM = 25; // henrik api limit
+const REQ_PER_POLL = 2; // matches + mmr
+const FLOOR_SECONDS = 10; // never go below this
+const HEADROOM = 0.7; // use 60% of budget to avoid 429s & bursts
+const PHASE_MIN_MS = 200;
+const PHASE_MAX_MS = 1500; // cap so first hit isn't too delayed
+
+export function computeSafePollMs({
+  accounts = 1,
+  budgetRpm = BUDGET_RPM,
+  reqPerPoll = REQ_PER_POLL,
+  headroom = HEADROOM,
+  retryPad = 0.2, // + in % request padding for occasional retries/extra endpoints
+  safetyPad = 0.9, // an extra 10% margin on top of headroom
+} = {}) {
   const n = Math.max(1, Number(accounts) || 1);
-  const minSecondsByBudget = (n * 120) / budgetRpm;
-  const finalSeconds = Math.max(10, Math.ceil(minSecondsByBudget));
-  return finalSeconds * 1000;
+
+  const effectiveRpm = Math.max(1, budgetRpm * headroom * safetyPad);
+
+  const adjustedReqPerPoll = Math.max(1, reqPerPoll * (1 + retryPad));
+
+  const requiredSeconds = Math.ceil((n * adjustedReqPerPoll * 60) / effectiveRpm);
+
+  // round up to small step to reduce flapping
+  // const step = 2; // round to nearest 2s
+  // const stepped = Math.ceil(requiredSeconds / step) * step;
+
+  return Math.max(FLOOR_SECONDS, requiredSeconds) * 1000;
 }
 
 function nextDelayWithBackoff(baseMs, attempt, retryAfterSec) {
   if (Number.isFinite(retryAfterSec)) return Math.max(1000, retryAfterSec * 1000);
   const max = 30000;
   const exp = Math.min(baseMs * 2 ** attempt, max);
-  const jitter = exp * (0.2 * Math.random()); // ±20%
+  const jitter = exp * (0.2 * Math.random()); // +-20%
   return Math.round(exp * 0.9 + jitter);
 }
 
@@ -30,6 +51,16 @@ function dayKeyFromMs(ms) {
   return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
 }
 
+function randInt(max) {
+  // crypto if available else Math.random
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    const u32 = new Uint32Array(1);
+    crypto.getRandomValues(u32);
+    return u32[0] % (max + 1);
+  }
+  return Math.floor(Math.random() * (max + 1));
+}
+
 export default function useHenrikStats({
   apiKey,
   region,
@@ -37,6 +68,7 @@ export default function useHenrikStats({
   name,
   tag,
   pollMs, // optional
+  accounts = 1,
 }) {
   const [data, setData] = useState(null);
   const [isLoading, setLoading] = useState(true);
@@ -185,12 +217,13 @@ export default function useHenrikStats({
       }
     }
 
+    const baseDelay = Number.isFinite(pollMs) && pollMs > 0 ? pollMs : computeSafePollMs({ accounts });
+
     async function loop() {
       if (stopRef.current) return;
       const res = await fetchOnce();
       if (stopRef.current) return;
 
-      const baseDelay = Number.isFinite(pollMs) && pollMs > 0 ? pollMs : computeSafePollMs(1); // keep 10s floor
       let delay = baseDelay;
 
       if (!res.ok) {
@@ -199,18 +232,23 @@ export default function useHenrikStats({
       } else {
         attemptRef.current = 0;
       }
+
       const jitter = delay * (0.1 * Math.random());
       const next = Math.round(delay * 0.95 + jitter);
 
       timerRef.current = setTimeout(loop, next);
     }
 
-    loop();
+    const targetPhase = Math.min(PHASE_MAX_MS, Math.max(PHASE_MIN_MS, Math.round(baseDelay * 0.1)));
+    const phase = Math.max(PHASE_MIN_MS, Math.min(PHASE_MAX_MS, randInt(targetPhase)));
+
+    timerRef.current = setTimeout(loop, phase);
+
     return () => {
       stopRef.current = true;
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, [apiKey, region, puuid, name, tag, pollMs]);
+  }, [apiKey, region, puuid, name, tag, pollMs, accounts]);
 
   return { data, error, isLoading };
 }

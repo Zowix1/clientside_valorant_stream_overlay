@@ -11,6 +11,40 @@ const clampInt = (v, min = 0, max = Number.MAX_SAFE_INTEGER) => {
   return Math.min(max, Math.max(min, n));
 };
 
+function clamp01(x) {
+  const n = Number(x);
+  return Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : 1;
+}
+
+function hexToRgba(hex, a = 1) {
+  if (!hex || typeof hex !== 'string') return `rgba(0,0,0,${a})`;
+  let h = hex.trim();
+  if (h === 'transparent') return 'transparent';
+  if (h.startsWith('#')) h = h.slice(1);
+  // Support #RGB, #RRGGBB
+  if (h.length === 3) {
+    const r = parseInt(h[0] + h[0], 16);
+    const g = parseInt(h[1] + h[1], 16);
+    const b = parseInt(h[2] + h[2], 16);
+    return a >= 1 ? `rgb(${r}, ${g}, ${b})` : `rgba(${r}, ${g}, ${b}, ${a})`;
+  }
+  // If hex already includes alpha (#RRGGBBAA), prefer that and ignore separate a
+  if (h.length === 8) {
+    const r = parseInt(h.slice(0, 2), 16);
+    const g = parseInt(h.slice(2, 4), 16);
+    const b = parseInt(h.slice(4, 6), 16);
+    const aa = parseInt(h.slice(6, 8), 16) / 255;
+    return aa >= 1 ? `rgb(${r}, ${g}, ${b})` : `rgba(${r}, ${g}, ${b}, ${aa})`;
+  }
+  if (h.length === 6) {
+    const r = parseInt(h.slice(0, 2), 16);
+    const g = parseInt(h.slice(2, 4), 16);
+    const b = parseInt(h.slice(4, 6), 16);
+    return a >= 1 ? `rgb(${r}, ${g}, ${b})` : `rgba(${r}, ${g}, ${b}, ${a})`;
+  }
+  return a >= 1 ? hex : `rgba(0,0,0,${a})`;
+}
+
 function Tracker() {
   const [params] = useSearchParams();
 
@@ -18,16 +52,18 @@ function Tracker() {
   const apiKey = params.get('key') || '';
   const region = params.get('region') || '';
   const accounts = Math.max(1, Number(params.get('accounts')) || 1);
-  const pollMs = computeSafePollMs(accounts);
+  const pollMs = computeSafePollMs({ accounts });
 
   const puuid = params.get('puuid') || undefined;
   const name = params.get('name') || undefined;
   const tag = params.get('tag') || undefined;
 
-  const { data, error, isLoading } = useHenrikStats({ apiKey, region, puuid, name, tag, pollMs });
+  const { data, error, isLoading } = useHenrikStats({ apiKey, region, puuid, name, tag, pollMs, accounts });
 
   // Customization: card colors + text
-  const cardBg = params.get('bg') || '#111827'; // gray-900
+  const bgParam = (params.get('bg') || '#111827').trim();
+  const bgAlpha = clamp01(params.get('bga') ?? 1);
+  const cardBg = bgParam === 'transparent' || bgAlpha === 0 ? 'transparent' : hexToRgba(bgParam, bgAlpha);
   const textHex = params.get('text') || '#FFFFFF';
 
   // Waves toggle

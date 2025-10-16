@@ -58,7 +58,7 @@ export default function LandingCard({ settings }) {
   const [accounts, setAccounts] = useState(1);
   const [copied, setCopied] = useState(false);
 
-  const pollMs = computeSafePollMs(accounts);
+  const pollMs = computeSafePollMs({ accounts });
 
   // --- serialize overlay customizations into URLSearchParams ---
   const appendSettings = (p) => {
@@ -69,6 +69,9 @@ export default function LandingCard({ settings }) {
     if (border?.mode === 'solid') {
       p.set('border', 's');
       if (border.solid) p.set('bs', border.solid);
+      if (typeof border.solidAlpha === 'number') {
+        p.set('bsa', String(Math.max(0, Math.min(1, border.solidAlpha))));
+      }
     } else {
       p.set('border', 'g');
       const stops =
@@ -80,6 +83,9 @@ export default function LandingCard({ settings }) {
 
     // Card colors
     if (card?.bg) p.set('bg', card.bg);
+    if (typeof card?.bgAlpha === 'number') {
+      p.set('bga', String(Math.max(0, Math.min(1, card.bgAlpha))));
+    }
     if (card?.text) p.set('text', card.text);
 
     // Waves
@@ -94,7 +100,6 @@ export default function LandingCard({ settings }) {
         if (lightning.duration != null) p.set('ldur', String(lightning.duration));
         if (lightning.segmentsPerEdge != null) p.set('lseg', String(lightning.segmentsPerEdge));
         if (lightning.jitter != null) p.set('ljit', String(lightning.jitter));
-        // Optional: branch chance; if you add to settings, also set lbranch here.
       }
     }
 
@@ -385,6 +390,12 @@ export default function LandingCard({ settings }) {
           <span>
             ~2 requests per poll. With {clampInt(accounts)} account(s):{' '}
             <span className='font-mono'>{Math.round(pollMs / 1000)}s</span>.
+          </span>
+        </div>
+        <div className='mt-2 text-xs text-gray-400 flex items-center'>
+          <span>
+            Dimensions: <span className='font-mono'>368×104</span> (tracker only) ·{' '}
+            <span className='font-mono'>368×136</span> (with socials)
           </span>
         </div>
       </div>
