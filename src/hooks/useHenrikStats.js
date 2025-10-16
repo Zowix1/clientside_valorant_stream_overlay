@@ -93,6 +93,21 @@ function saveCache(key, data) {
 }
 /** --------------------------------------------------- */
 
+// shallow compare only the fields you render
+function equalPayload(a, b) {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.wins === b.wins &&
+    a.losses === b.losses &&
+    a.kills === b.kills &&
+    a.deaths === b.deaths &&
+    a.currentRR === b.currentRR &&
+    a.recentRRChange === b.recentRRChange &&
+    a.image === b.image
+  );
+}
+
 export default function useHenrikStats({
   apiKey,
   region,
@@ -120,11 +135,30 @@ export default function useHenrikStats({
   const todayStartRef = useRef(startOfTodayMs());
 
   const lastGoodRef = useRef(null);
+  const lastCommittedRef = useRef(null);
   const cacheKeyRef = useRef(null);
+  const loadedOnceRef = useRef(false);
+
+  // state commit helper
+  function commitIfChanged(payload, { mmrUpdated = true } = {}) {
+    const prev = lastCommittedRef.current;
+    const changed = !equalPayload(prev, payload);
+
+    if (changed) {
+      lastCommittedRef.current = payload;
+      setData(payload);
+    }
+
+    if (mmrUpdated && changed) {
+      lastGoodRef.current = payload;
+      saveCache(cacheKeyRef.current, payload);
+    }
+  }
 
   useEffect(() => {
     stopRef.current = false;
     setLoading(true);
+    loadedOnceRef.current = false;
     setError(null);
     setStale(false);
     setMmrStale(false);
@@ -134,6 +168,7 @@ export default function useHenrikStats({
     totalsRef.current = { wins: 0, losses: 0, kills: 0, deaths: 0 };
     dayKeyRef.current = dayKeyFromMs(startOfTodayMs());
     todayStartRef.current = startOfTodayMs();
+    lastCommittedRef.current = null;
 
     if (!apiKey) {
       setError(new Error('Missing API key'));
@@ -157,9 +192,11 @@ export default function useHenrikStats({
     const cached = loadCache(cacheKeyRef.current);
     if (cached) {
       lastGoodRef.current = cached;
+      lastCommittedRef.current = cached;
       setData(cached);
       setStale(true); // until first fresh success
       setLoading(false);
+      loadedOnceRef.current = true;
     }
 
     async function resolvePuuid() {
@@ -247,17 +284,24 @@ export default function useHenrikStats({
         const { wins, losses, kills, deaths } = totalsRef.current;
         const payload = { wins, losses, kills, deaths, currentRR, recentRRChange, image };
 
-        // Only commit to cache if MMR succeeded
+        // Only persist to cache when MMR succeeded
         if (!mmrFailed) {
-          lastGoodRef.current = payload;
-          saveCache(cacheKeyRef.current, payload);
+          commitIfChanged(payload, { mmrUpdated: true });
+        } else {
+          // Update UI if changed, but don't replace lastGoodRef/cache
+          if (!equalPayload(lastCommittedRef.current, payload)) {
+            lastCommittedRef.current = payload;
+            setData(payload);
+          }
         }
-        setMmrStale(mmrFailed);
 
-        setData(payload);
+        setMmrStale((prev) => (prev === mmrFailed ? prev : mmrFailed));
+        setStale((prev) => (prev ? false : prev));
+        if (!loadedOnceRef.current) {
+          setLoading(false);
+          loadedOnceRef.current = true;
+        }
         setError(null);
-        setStale(false); // fresh matches (and possibly MMR) arrived
-        setLoading(false);
         attemptRef.current = 0;
         return { ok: true };
       } catch (e) {
@@ -266,13 +310,22 @@ export default function useHenrikStats({
 
         // On 429, keep showing last good (if any) and mark stale
         if (status === 429 && lastGoodRef.current) {
-          setData(lastGoodRef.current);
-          setStale(true);
+          if (!equalPayload(lastCommittedRef.current, lastGoodRef.current)) {
+            lastCommittedRef.current = lastGoodRef.current;
+            setData(lastGoodRef.current);
+          }
+          setStale((prev) => (prev ? prev : true));
+          if (!loadedOnceRef.current) {
+            setLoading(false);
+            loadedOnceRef.current = true;
+          }
           setError(e);
-          setLoading(false);
         } else {
           setError(e);
-          setLoading(false);
+          if (!loadedOnceRef.current) {
+            setLoading(false);
+            loadedOnceRef.current = true;
+          }
         }
         return { ok: false, status, retryAfter };
       }

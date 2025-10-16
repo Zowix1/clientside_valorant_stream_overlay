@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
 import { useSpring, animated, to } from 'react-spring';
 
 function generateWavePath(amp1, phase1, wl1, amp2, phase2, wl2) {
@@ -18,8 +18,7 @@ function generateWavePath(amp1, phase1, wl1, amp2, phase2, wl2) {
   return d + ` L ${end},${bottomY} L ${start},${bottomY} Z`;
 }
 
-export default function WaveNumber({ baseColor = '#FFF', value, color = '#10B981', variant = 0 }) {
-  // two seamless presets
+export default function WaveNumber({ baseColor = '#FFF', value, color = '#10B981', variant = 0, paused = false }) {
   const { amp1, amp2, wl1, wl2, dur1, dur2 } = useMemo(
     () =>
       variant === 0
@@ -28,20 +27,24 @@ export default function WaveNumber({ baseColor = '#FFF', value, color = '#10B981
     [variant]
   );
 
+  // stable id across renders
+  const idRef = useRef(`wave-clip-${value}-${variant}-${Math.random().toString(36).slice(2)}`);
+  const clipId = idRef.current;
+
   const spring1 = useSpring({
     from: { p: 0 },
     to: { p: 2 * Math.PI },
-    loop: true,
+    loop: !paused,
+    pause: paused,
     config: { duration: dur1, easing: (t) => t },
   });
   const spring2 = useSpring({
     from: { p: 0 },
     to: { p: 2 * Math.PI },
-    loop: true,
+    loop: !paused,
+    pause: paused,
     config: { duration: dur2, easing: (t) => t },
   });
-
-  const clipId = `wave-clip-${value}-${variant}-${Math.random().toString(36).slice(2)}`;
 
   return (
     <animated.svg
@@ -53,7 +56,9 @@ export default function WaveNumber({ baseColor = '#FFF', value, color = '#10B981
         display: 'inline-block',
         verticalAlign: 'baseline',
         overflow: 'visible',
-      }}>
+        pointerEvents: 'none',
+      }}
+      aria-hidden>
       <defs>
         <clipPath id={clipId} clipPathUnits='userSpaceOnUse'>
           <animated.path
