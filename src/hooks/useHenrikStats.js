@@ -6,7 +6,7 @@ const BASE = import.meta.env.VITE_HENRIK_BASE ?? '/henrik';
 const BUDGET_RPM = 25; // henrik api limit
 const REQ_PER_POLL = 2; // matches + mmr
 const FLOOR_SECONDS = 10; // never go below this
-const HEADROOM = 0.7; // use 60% of budget to avoid 429s & bursts
+const HEADROOM = 0.7; // use 70% of budget to avoid 429s & bursts
 const PHASE_MIN_MS = 200;
 const PHASE_MAX_MS = 1500; // cap so first hit isn't too delayed
 
@@ -19,17 +19,9 @@ export function computeSafePollMs({
   safetyPad = 0.9, // an extra 10% margin on top of headroom
 } = {}) {
   const n = Math.max(1, Number(accounts) || 1);
-
   const effectiveRpm = Math.max(1, budgetRpm * headroom * safetyPad);
-
   const adjustedReqPerPoll = Math.max(1, reqPerPoll * (1 + retryPad));
-
   const requiredSeconds = Math.ceil((n * adjustedReqPerPoll * 60) / effectiveRpm);
-
-  // round up to small step to reduce flapping
-  // const step = 2; // round to nearest 2s
-  // const stepped = Math.ceil(requiredSeconds / step) * step;
-
   return Math.max(FLOOR_SECONDS, requiredSeconds) * 1000;
 }
 
@@ -61,6 +53,46 @@ function randInt(max) {
   return Math.floor(Math.random() * (max + 1));
 }
 
+/** ---------- OBS-safe localStorage helpers ---------- */
+function getSafeStorage() {
+  try {
+    if (typeof localStorage === 'undefined') return null;
+    const k = '__obs_probe__';
+    localStorage.setItem(k, '1');
+    localStorage.removeItem(k);
+    return localStorage;
+  } catch {
+    return null;
+  }
+}
+const safeStore = getSafeStorage();
+
+function makeCacheKey({ apiKey, region, puuid, name, tag }) {
+  const id = puuid || `${name || ''}#${tag || ''}`;
+  const keyFrag = (apiKey || '').slice(0, 6);
+  return `henrik:stats:${region}:${id}:${keyFrag}`;
+}
+function loadCache(key, maxAgeMs = 30 * 60 * 1000) {
+  if (!safeStore) return null;
+  try {
+    const raw = safeStore.getItem(key);
+    if (!raw) return null;
+    const obj = JSON.parse(raw);
+    if (!obj || typeof obj !== 'object') return null;
+    if (Date.now() - (obj.ts || 0) > maxAgeMs) return null;
+    return obj.data || null;
+  } catch {
+    return null;
+  }
+}
+function saveCache(key, data) {
+  if (!safeStore) return;
+  try {
+    safeStore.setItem(key, JSON.stringify({ ts: Date.now(), data }));
+  } catch {}
+}
+/** --------------------------------------------------- */
+
 export default function useHenrikStats({
   apiKey,
   region,
@@ -73,6 +105,8 @@ export default function useHenrikStats({
   const [data, setData] = useState(null);
   const [isLoading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [stale, setStale] = useState(false); // cached due to 429
+  const [mmrStale, setMmrStale] = useState(false); // MMR-only failure this tick
 
   const stopRef = useRef(false);
   const attemptRef = useRef(0);
@@ -85,10 +119,15 @@ export default function useHenrikStats({
   const dayKeyRef = useRef(dayKeyFromMs(startOfTodayMs()));
   const todayStartRef = useRef(startOfTodayMs());
 
+  const lastGoodRef = useRef(null);
+  const cacheKeyRef = useRef(null);
+
   useEffect(() => {
     stopRef.current = false;
     setLoading(true);
     setError(null);
+    setStale(false);
+    setMmrStale(false);
 
     // reset daily monotonic state when identity changes
     seenMatchIdsRef.current = new Set();
@@ -112,6 +151,16 @@ export default function useHenrikStats({
       headers: { Authorization: apiKey },
       timeout: 15000,
     });
+
+    // warm cache
+    cacheKeyRef.current = makeCacheKey({ apiKey, region, puuid, name, tag });
+    const cached = loadCache(cacheKeyRef.current);
+    if (cached) {
+      lastGoodRef.current = cached;
+      setData(cached);
+      setStale(true); // until first fresh success
+      setLoading(false);
+    }
 
     async function resolvePuuid() {
       if (puuid) {
@@ -144,25 +193,18 @@ export default function useHenrikStats({
     function tallyMatchIfNew(m, P) {
       const id = m?.metadata?.matchid;
       if (!id || seenMatchIdsRef.current.has(id)) return;
-
       if (m?.metadata?.mode_id !== 'competitive') return;
-
       const startMs = (m?.metadata?.game_start ?? 0) * 1000;
       if (startMs < todayStartRef.current) return;
-
       const you = m?.players?.all_players?.find((p) => p?.puuid === P);
       if (!you) return;
-
       const teamKey = you.team?.toLowerCase?.();
       const team = m?.teams?.[teamKey];
-
-      // Only count finished matches – prevents “loss” flicker for in-progress games
       if (typeof team?.has_won !== 'boolean') return;
 
       const t = totalsRef.current;
       if (team.has_won) t.wins += 1;
       else t.losses += 1;
-
       t.kills += you?.stats?.kills ?? 0;
       t.deaths += you?.stats?.deaths ?? 0;
 
@@ -172,48 +214,67 @@ export default function useHenrikStats({
     async function fetchOnce() {
       try {
         const P = idRef.current.puuid || (await resolvePuuid());
-
+        setMmrStale(false); // reset per tick
         maybeRollDay();
 
-        // Pull enough items so we catch earlier matches if overlay is opened late
+        // Matches
         const mh = await axiosRef.current.get(`/valorant/v3/by-puuid/matches/${region}/${P}`, {
           params: { size: 10, mode: 'competitive' },
         });
         const matches = Array.isArray(mh.data?.data) ? mh.data.data : [];
-
         matches
           .slice()
           .sort((a, b) => (a?.metadata?.game_start ?? 0) - (b?.metadata?.game_start ?? 0))
           .forEach((m) => tallyMatchIfNew(m, P));
 
-        // MMR
-        let currentRR = null,
-          recentRRChange = null,
-          image = null;
+        // MMR (best-effort). If it fails, reuse cached MMR fields.
+        let currentRR, recentRRChange, image;
+        let mmrFailed = false;
         try {
           const mmr = await axiosRef.current.get(`/valorant/v2/by-puuid/mmr/${region}/${P}`);
           const cd = mmr.data?.data?.current_data ?? {};
           currentRR = cd.ranking_in_tier ?? null;
           recentRRChange = cd.mmr_change_to_last_game ?? null;
           image = cd?.images?.large ?? cd?.images?.small ?? null;
-        } catch (e) {
-          console.warn('MMR failed', e?.response?.status || e?.message);
+        } catch {
+          mmrFailed = true;
+          const lg = lastGoodRef.current;
+          currentRR = lg?.currentRR ?? null;
+          recentRRChange = lg?.recentRRChange ?? null;
+          image = lg?.image ?? null;
         }
 
         const { wins, losses, kills, deaths } = totalsRef.current;
-        setData({ wins, losses, kills, deaths, currentRR, recentRRChange, image });
+        const payload = { wins, losses, kills, deaths, currentRR, recentRRChange, image };
+
+        // Only commit to cache if MMR succeeded
+        if (!mmrFailed) {
+          lastGoodRef.current = payload;
+          saveCache(cacheKeyRef.current, payload);
+        }
+        setMmrStale(mmrFailed);
+
+        setData(payload);
         setError(null);
+        setStale(false); // fresh matches (and possibly MMR) arrived
         setLoading(false);
         attemptRef.current = 0;
         return { ok: true };
       } catch (e) {
-        setError(e);
-        setLoading(false);
-        return {
-          ok: false,
-          status: e?.response?.status,
-          retryAfter: parseFloat(e?.response?.headers?.['retry-after']),
-        };
+        const status = e?.response?.status;
+        const retryAfter = parseFloat(e?.response?.headers?.['retry-after']);
+
+        // On 429, keep showing last good (if any) and mark stale
+        if (status === 429 && lastGoodRef.current) {
+          setData(lastGoodRef.current);
+          setStale(true);
+          setError(e);
+          setLoading(false);
+        } else {
+          setError(e);
+          setLoading(false);
+        }
+        return { ok: false, status, retryAfter };
       }
     }
 
@@ -250,5 +311,5 @@ export default function useHenrikStats({
     };
   }, [apiKey, region, puuid, name, tag, pollMs, accounts]);
 
-  return { data, error, isLoading };
+  return { data, error, isLoading, stale, mmrStale };
 }

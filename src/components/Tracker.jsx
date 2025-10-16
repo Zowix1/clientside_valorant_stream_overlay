@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { FiLoader, FiAlertCircle, FiTrendingUp, FiTrendingDown } from 'react-icons/fi';
+import { FiLoader, FiAlertCircle, FiTrendingUp, FiTrendingDown, FiInfo, FiMinus } from 'react-icons/fi';
 import useHenrikStats, { computeSafePollMs } from '../hooks/useHenrikStats';
 import WaveNumber from './WaveNumber';
 import LightningOverlay from './LightningOverlay';
@@ -21,14 +21,12 @@ function hexToRgba(hex, a = 1) {
   let h = hex.trim();
   if (h === 'transparent') return 'transparent';
   if (h.startsWith('#')) h = h.slice(1);
-  // Support #RGB, #RRGGBB
   if (h.length === 3) {
     const r = parseInt(h[0] + h[0], 16);
     const g = parseInt(h[1] + h[1], 16);
     const b = parseInt(h[2] + h[2], 16);
     return a >= 1 ? `rgb(${r}, ${g}, ${b})` : `rgba(${r}, ${g}, ${b}, ${a})`;
   }
-  // If hex already includes alpha (#RRGGBBAA), prefer that and ignore separate a
   if (h.length === 8) {
     const r = parseInt(h.slice(0, 2), 16);
     const g = parseInt(h.slice(2, 4), 16);
@@ -58,7 +56,15 @@ function Tracker() {
   const name = params.get('name') || undefined;
   const tag = params.get('tag') || undefined;
 
-  const { data, error, isLoading } = useHenrikStats({ apiKey, region, puuid, name, tag, pollMs, accounts });
+  const { data, error, isLoading, stale, mmrStale } = useHenrikStats({
+    apiKey,
+    region,
+    puuid,
+    name,
+    tag,
+    pollMs,
+    accounts,
+  });
 
   // Customization: card colors + text
   const bgParam = (params.get('bg') || '#111827').trim();
@@ -101,12 +107,23 @@ function Tracker() {
     }
   }, []);
 
+  // --- RR icon/color logic ---
   const rrNum = Number(data?.recentRRChange ?? 0);
-  const isGain = rrNum >= 0;
-  const Icon = isGain ? FiTrendingUp : FiTrendingDown;
-  const color = isGain ? 'text-green-400' : 'text-red-400';
+  let RRIcon = FiMinus;
+  let rrColorClass = 'text-slate-300';
+  if (Number.isFinite(rrNum)) {
+    if (rrNum > 0) {
+      RRIcon = FiTrendingUp;
+      rrColorClass = 'text-green-400';
+    } else if (rrNum < 0) {
+      RRIcon = FiTrendingDown;
+      rrColorClass = 'text-red-400';
+    } // rrNum === 0
+  }
 
   const status = data && data.wins > data.losses ? 'winning' : data && data.wins < data.losses ? 'losing' : 'even';
+
+  const isRateLimited = stale && error && error?.response?.status === 429;
 
   return (
     <div
@@ -118,7 +135,7 @@ function Tracker() {
           <FiLoader className='w-6 h-6 animate-spin text-blue-400' />
           <span>Loading…</span>
         </div>
-      ) : error ? (
+      ) : error && !data ? (
         <div className='flex flex-col items-center justify-center space-y-1'>
           <FiAlertCircle className='w-6 h-6 text-red-500' />
           <span className='text-sm'>Failed to load</span>
@@ -128,7 +145,27 @@ function Tracker() {
         </div>
       ) : (
         <>
-          {/* Lightning overlay (configurable) */}
+          {(isRateLimited || mmrStale) && (
+            <div className='absolute top-1 right-1 flex flex-col items-end gap-1'>
+              {isRateLimited && (
+                <div
+                  className='flex items-center gap-1.5 text-[10px] px-1.5 py-0.5 rounded
+                                bg-yellow-500/15 text-yellow-300 ring-1 ring-yellow-500/30'>
+                  <FiAlertCircle className='w-3.5 h-3.5' />
+                  <span>rate-limited - showing cached</span>
+                </div>
+              )}
+              {mmrStale && !isRateLimited && (
+                <div
+                  className='flex items-center gap-1.5 text-[10px] px-1.5 py-0.5 rounded
+                                bg-slate-500/15 text-slate-200 ring-1 ring-slate-400/30'>
+                  <FiInfo className='w-3.5 h-3.5' />
+                  <span>MMR rate-limited - showing cached</span>
+                </div>
+              )}
+            </div>
+          )}
+
           {size.w > 0 && lightEnabled && (
             <LightningOverlay
               status={status}
@@ -149,15 +186,15 @@ function Tracker() {
                 <div className='h-full w-10 bg-gray-700/60 rounded' />
               )}
               <div className='flex flex-col font-semibold text-lg justify-between py-1'>
-                <span className='text-lg font-semibold'>{data?.currentRR ?? 0} RR</span>
-                <span className={`flex items-center text-lg font-bold ${color}`}>
-                  <Icon className='w-5 h-5 mr-1' />
+                <span className='text-lg font-semibold'>{Number(data?.currentRR ?? 0)} RR</span>
+                <span className={`flex items-center text-lg font-bold ${rrColorClass}`}>
+                  <RRIcon className='w-5 h-5 mr-1' />
                   {Number.isFinite(rrNum) ? rrNum : 0}
                 </span>
               </div>
             </div>
 
-            {/* W / L */}
+            {/* W / L (draws not counted) */}
             <div className='flex items-center text-3xl font-semibold'>
               <span className='mr-1.5'>W/L:</span>
               {wavesEnabled ? (
