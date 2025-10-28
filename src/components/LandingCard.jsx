@@ -75,10 +75,9 @@ export default function LandingCard({ settings }) {
     } else {
       p.set('border', 'g');
       const stops =
-        Array.isArray(border?.gradient) && border.gradient.length ? border.gradient : ['#6b21a8', '#ec4899', '#6b21a8'];
+        Array.isArray(border?.gradient) && border.gradient.length ? border.gradient : ['#6b21a8', '#ec4899'];
       if (stops[0]) p.set('b1', stops[0]);
       if (stops[1]) p.set('b2', stops[1]);
-      if (stops[2]) p.set('b3', stops[2]);
     }
 
     // Card colors

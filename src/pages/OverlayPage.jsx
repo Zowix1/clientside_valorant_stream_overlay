@@ -51,7 +51,7 @@ export default function OverlayPage() {
 
   // ---- AnimatedBorder (border) ----
   const borderMode = params.get('border') === 's' ? 'solid' : 'gradient'; // 'g' or 's'
-  const borderGradient = [params.get('b1') || '#6b21a8', params.get('b2') || '#ec4899', params.get('b3') || '#6b21a8'];
+  const borderGradient = [params.get('b1') || '#6b21a8', params.get('b2') || '#ec4899'];
 
   const borderSolidHex = params.get('bs') || '#6b21a8';
   const borderSolidAlpha = clamp01(params.get('bsa') ?? 1);
