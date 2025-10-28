@@ -1,5 +1,14 @@
 import { useMemo, useState } from 'react';
-import { FiEye, FiEyeOff, FiChevronUp, FiChevronDown, FiCopy, FiCheck, FiExternalLink } from 'react-icons/fi';
+import {
+  FiEye,
+  FiEyeOff,
+  FiChevronUp,
+  FiChevronDown,
+  FiCopy,
+  FiCheck,
+  FiExternalLink,
+  FiDownload,
+} from 'react-icons/fi';
 import Select from 'react-select';
 import { computeSafePollMs } from '../hooks/useHenrikStats';
 
@@ -46,8 +55,16 @@ const selectStyles = {
 
 // Small utility
 const clampInt = (v, min = 1) => Math.max(min, parseInt(v || 0, 10));
+const asBool = (v, def = false) => (v == null ? def : String(v) === '1');
+const get = (p, k) => p.get(k);
+const getNum = (p, k, def = undefined) => {
+  const n = Number(p.get(k));
+  return Number.isFinite(n) ? n : def;
+};
 
-export default function LandingCard({ settings }) {
+const regionFromValue = (v) => REGION_OPTS.find((o) => o.value === v) || REGION_OPTS[0];
+
+export default function LandingCard({ settings, onSettingsChange }) {
   const [apiKey, setApiKey] = useState('');
   const [showKey, setShowKey] = useState(false);
   const [regionOpt, setRegionOpt] = useState(REGION_OPTS[0]);
@@ -57,6 +74,9 @@ export default function LandingCard({ settings }) {
   const [tag, setTag] = useState('');
   const [accounts, setAccounts] = useState(1);
   const [copied, setCopied] = useState(false);
+  const [importUrl, setImportUrl] = useState('');
+  const [imported, setImported] = useState(false);
+  const [importErr, setImportErr] = useState('');
 
   const pollMs = computeSafePollMs({ accounts });
 
@@ -146,7 +166,102 @@ export default function LandingCard({ settings }) {
     } catch {}
   }
 
-  // Fancy segmented control for radio
+  function handleImport() {
+    setImportErr('');
+    try {
+      const u = new URL(importUrl.trim());
+      const p = u.searchParams ?? new URLSearchParams(importUrl.trim());
+
+      // core params
+      const region = get(p, 'region');
+      const a = clampInt(get(p, 'accounts') || 1);
+      const key = get(p, 'key') || '';
+      const P = get(p, 'puuid');
+      const N = get(p, 'name');
+      const T = get(p, 'tag');
+
+      if (region) setRegionOpt(regionFromValue(region));
+      setAccounts(a);
+      setApiKey(key);
+
+      if (P) {
+        setMode('puuid');
+        setPuuid(P);
+        setName('');
+        setTag('');
+      } else if (N && T) {
+        setMode('riot');
+        setPuuid('');
+        setName(N);
+        setTag(T);
+      }
+
+      // style params (only if parent provided a setter)
+      if (typeof onSettingsChange === 'function') {
+        const borderMode = get(p, 'border') === 's' ? 'solid' : 'gradient';
+        const next = { border: {}, card: {}, waves: {}, lightning: {}, socials: { items: {} } };
+
+        // border
+        if (borderMode === 'solid') {
+          next.border.mode = 'solid';
+          next.border.solid = get(p, 'bs') || '#ffffff';
+          const bsa = getNum(p, 'bsa');
+          if (bsa != null) next.border.solidAlpha = Math.max(0, Math.min(1, bsa));
+        } else {
+          next.border.mode = 'gradient';
+          next.border.gradient = [get(p, 'b1') || '#6b21a8', get(p, 'b2') || '#ec4899'];
+        }
+
+        // card
+        const bg = get(p, 'bg');
+        if (bg) next.card.bg = bg;
+        const bga = getNum(p, 'bga');
+        if (bga != null) next.card.bgAlpha = Math.max(0, Math.min(1, bga));
+        const text = get(p, 'text');
+        if (text) next.card.text = text;
+
+        // waves
+        next.waves.enabled = asBool(get(p, 'waves'), true);
+
+        // lightning
+        const lightEnabled = asBool(get(p, 'light'), true);
+        next.lightning = {
+          enabled: lightEnabled,
+          interval: getNum(p, 'lint', 20000),
+          boltCount: getNum(p, 'lbolts', 1),
+          duration: getNum(p, 'ldur', 1200),
+          segmentsPerEdge: getNum(p, 'lseg', 14),
+          jitter: getNum(p, 'ljit', 6),
+        };
+
+        // socials
+        const sb = asBool(get(p, 'sb'), false);
+        next.socials.enabled = sb;
+        next.socials.interval = getNum(p, 'sbint', 20000);
+        // generic decode: s_<key>_en / s_<key>
+        for (const [k, v] of p.entries()) {
+          if (k.startsWith('s_') && k.endsWith('_en')) {
+            const keyName = k.slice(2, -3);
+            next.socials.items[keyName] = next.socials.items[keyName] || {};
+            next.socials.items[keyName].enabled = v === '1';
+          } else if (k.startsWith('s_') && !k.endsWith('_en')) {
+            const keyName = k.slice(2);
+            next.socials.items[keyName] = next.socials.items[keyName] || {};
+            next.socials.items[keyName].handle = v;
+          }
+        }
+
+        console.log('here');
+        onSettingsChange(next);
+        setImported(true);
+        console.log('here');
+        setTimeout(() => setImported(false), 1200);
+      }
+    } catch {
+      setImportErr('Could not parse URL. Paste a full /overlay?... link.');
+    }
+  }
+
   const Segmented = () => (
     <div className='relative w-full sm:w-auto rounded-lg p-1 bg-gray-900/70 ring-1 ring-white/10'>
       <div className='grid grid-cols-2 gap-1'>
@@ -250,6 +365,27 @@ export default function LandingCard({ settings }) {
         <h1 className='text-xl sm:text-2xl font-bold tracking-tight'>Valorant Overlay Link Generator</h1>
       </div>
 
+      {/* Import existing URL */}
+      <div className='mb-4'>
+        <label className='text-sm text-gray-300 mb-1.5 block'>Import existing overlay URL</label>
+        <div className='flex gap-2'>
+          <input
+            value={importUrl}
+            onChange={(e) => setImportUrl(e.target.value)}
+            placeholder='Paste /overlay?region=...&accounts=...&puuid=...&key=...'
+            className='flex-1 min-w-8 w-full rounded-md bg-gray-900/70 px-3 py-1 font-mono text-[12px] text-gray-100 ring-1 ring-white/10 focus:outline-none focus:ring-2 focus:ring-cyan-400/60'
+          />
+          <button
+            type='button'
+            onClick={handleImport}
+            className='px-3 rounded-md bg-[#1b2534] hover:bg-[#2e3849] transition-colors cursor-pointer ring-1 ring-white/10 text-sm flex items-center gap-2'>
+            {imported ? <FiCheck className='h-4 w-4 text-emerald-400' /> : <FiDownload className='h-4 w-4' />}
+            {imported ? 'Imported' : 'Import'}
+          </button>
+        </div>
+        {importErr ? <div className='mt-1 text-xs text-red-400'>{importErr}</div> : null}
+      </div>
+
       {/* API Key */}
       <label className='flex flex-col space-y-1.5'>
         <span className='text-sm text-gray-300'>HenrikDEV API Key</span>
@@ -260,7 +396,7 @@ export default function LandingCard({ settings }) {
                        focus:outline-none focus:ring-2 focus:ring-cyan-400/60'
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
-            placeholder='Paste your key…'
+            placeholder='Paste your key...'
             autoCorrect='off'
             autoComplete='off'
             spellCheck={false}
@@ -296,7 +432,7 @@ export default function LandingCard({ settings }) {
             onChange={setRegionOpt}
             styles={selectStyles}
             isSearchable
-            placeholder='Select region…'
+            placeholder='Select region...'
           />
         </label>
 
@@ -323,7 +459,7 @@ export default function LandingCard({ settings }) {
                        focus:outline-none focus:ring-2 focus:ring-cyan-400/60'
             value={puuid}
             onChange={(e) => setPuuid(e.target.value)}
-            placeholder='ad7d05d1-…-…'
+            placeholder='ad7d05d1-...-...'
           />
         </label>
       ) : (

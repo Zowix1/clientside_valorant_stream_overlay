@@ -87,7 +87,7 @@ function Landing() {
             animate={{ x: customOpen && isDesktop ? SHIFT_X : 0 }}
             transition={{ type: 'spring', stiffness: 360, damping: 30 }}>
             {/* Main card */}
-            <LandingCard settings={settings} />
+            <LandingCard settings={settings} onSettingsChange={setSettings} />
 
             <AnimatePresence>
               {!customOpen && isDesktop && (
